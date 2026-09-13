@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 11+ package visibility: the settings screen lists the assistant apps the
+         system itself offers, so the same two queries ColorOS uses must be visible to us. -->
+    <queries>
+        <intent>
+            <action android:name="android.service.voice.VoiceInteractionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.ASSIST" />
+        </intent>
+        <!-- The assistant card jumps into the system picker that ColorOS' own settings row opens;
+             without these the PermissionController activities stay invisible to us. -->
+        <intent>
+            <action android:name="android.intent.action.MANAGE_DEFAULT_APP" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.MANAGE_DEFAULT_APPS_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.VOICE_INPUT_SETTINGS" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".ui.App"
+        android:allowBackup="false"
+        android:description="@string/module_description"
+        android:hasCode="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.AssistRestore">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>
