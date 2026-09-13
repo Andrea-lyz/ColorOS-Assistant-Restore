@@ -151,13 +151,15 @@ LSP_AssistRestore/
 │  ├─ src/main/res/values{,-night}/themes.xml   界面主题（日夜两套）
 │  └─ src/main/resources/META-INF/xposed/{module.prop,java_init.list,scope.list}
 ├─ libxposed-api/                   compileOnly 用的 API 102 源码模块
-│  └─ build.gradle.kts              直接引用 ../../LSP_api/api/src/main/java
+│  ├─ src/api/java/                 随仓库提供的 API 102 源码（见 src/api/README.md）
+│  └─ build.gradle.kts              sourceSets.java.srcDir 指向 src/api/java
 └─ gradle/wrapper/                  Gradle 8.13 + AGP 8.13.2
 ```
 
-`:libxposed-api` 以 `sourceSets.java.srcDir` 指向工作区里已有的 `LSP_api/api` 源码（`api/build.gradle.kts`
-中 `libVersion = "102.0.0"`，`XposedInterface.API_102 = 102`），因此编译用的就是那份 API 102 源码本身，
-而不是下载的二进制；`io.github.libxposed.annotation.SinceApi/InternalApi` 未随仓库提供，用同目录下的
+`:libxposed-api` 以 `sourceSets.java.srcDir` 指向随仓库提供的 `src/api/java`（取自上游
+`libxposed/api` 的 commit `79b75b4`，即 tag `102.0.0` 后三个提交，`XposedInterface.API_102 = 102`），
+因此编译用的就是那份 API 102 源码本身，而不是下载的二进制；
+`io.github.libxposed.annotation.SinceApi/InternalApi` 未随上游提供，用 `src/annotation/java` 下的
 两个编译期注解补齐。API 始终是 `compileOnly`，不会进入 APK。
 
 `scope.list` 是四项：`system`、`com.android.systemui`、`com.android.launcher` 与

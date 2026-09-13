@@ -2,9 +2,10 @@ plugins {
     id("com.android.library")
 }
 
-// The reference API 102 sources live outside this project. Compiling them here keeps a single
-// source of truth for the module API and avoids depending on a Maven download at build time.
-val apiSourceDir = file("../../LSP_api/api/src/main/java")
+// The reference API 102 sources are vendored under src/api/java (see src/api/README.md). Compiling
+// them here keeps a single source of truth for the module API, avoids a Maven download at build
+// time, and keeps the repository buildable on its own.
+val apiSourceDir = file("src/api/java")
 val annotationSourceDir = file("src/annotation/java")
 
 android {
