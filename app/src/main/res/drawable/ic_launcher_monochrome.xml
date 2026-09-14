@@ -1,26 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M76.8,32.2 A31,31 0 1,1 84.6,57.2"
-        android:strokeWidth="8.2"
-        android:strokeColor="#FF000000"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"/>
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M88.2,36.6 L76.4,31.0 L75.0,44.2 Z"/>
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M41.6,48.2 h7.4 a3.7,3.7 0 0,1 3.7,3.7 v4.2 a3.7,3.7 0 0,1 -3.7,3.7 h-7.4 a3.7,3.7 0 0,1 -3.7,-3.7 v-4.2 a3.7,3.7 0 0,1 3.7,-3.7 z"/>
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M55.3,38.6 h7.4 a3.7,3.7 0 0,1 3.7,3.7 v23.4 a3.7,3.7 0 0,1 -3.7,3.7 h-7.4 a3.7,3.7 0 0,1 -3.7,-3.7 V42.3 a3.7,3.7 0 0,1 3.7,-3.7 z"/>
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M69.0,44.0 h7.4 a3.7,3.7 0 0,1 3.7,3.7 v12.6 a3.7,3.7 0 0,1 -3.7,3.7 h-7.4 a3.7,3.7 0 0,1 -3.7,-3.7 V47.7 a3.7,3.7 0 0,1 3.7,-3.7 z"/>
-</vector>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:gravity="fill"
+    android:src="@drawable/ic_launcher_monochrome_bitmap" />
