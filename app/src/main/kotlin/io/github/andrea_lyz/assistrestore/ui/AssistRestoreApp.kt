@@ -60,6 +60,7 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Swipe
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Widgets
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -240,6 +241,10 @@ fun AssistRestoreApp() {
     var skipOcrPreload by remember { mutableStateOf(store.skipOcrPreload()) }
     var unblockPageFlags by remember { mutableStateOf(store.unblockPageFlags()) }
     var fakeGoogleBuild by remember { mutableStateOf(store.spoofGoogleBuild()) }
+    var handleWhenBarHidden by remember { mutableStateOf(store.handleWhenBarHidden()) }
+    // Not a preference: the switch reports the launcher alias' component state, which is what the
+    // package manager keeps, so it also stays correct after a reinstall.
+    var hideLauncherIcon by remember { mutableStateOf(LauncherIcon.isHidden(context)) }
 
     // The framework bridge arrives asynchronously: once it is bound the real configuration is
     // readable (and writable) instead of the local fallback.
@@ -266,6 +271,7 @@ fun AssistRestoreApp() {
                 skipOcrPreload = store.skipOcrPreload()
                 unblockPageFlags = store.unblockPageFlags()
                 fakeGoogleBuild = store.spoofGoogleBuild()
+                handleWhenBarHidden = store.handleWhenBarHidden()
             }
         }
         App.addServiceStateListener(listener, true)
@@ -278,6 +284,20 @@ fun AssistRestoreApp() {
         Toast.makeText(
             context,
             "已保存：底角那项要重启手机后桌面才会重新判断，之前可能仍保留手势动画",
+            Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    // Hiding the icon keeps the app reachable: MainActivity still answers MAIN + INFO, so LSPosed
+    // and the system app-info page can open the settings screen with no launcher entry around.
+    val iconHint: (Boolean) -> Unit = { hidden ->
+        Toast.makeText(
+            context,
+            if (hidden) {
+                "已隐藏桌面图标：仍可从 LSPosed 模块页或系统设置的应用详情打开本应用"
+            } else {
+                "已重新显示桌面图标"
+            },
             Toast.LENGTH_LONG,
         ).show()
     }
@@ -380,6 +400,17 @@ fun AssistRestoreApp() {
             onUnblockPageFlagsChange = { unblockPageFlags = it; store.setUnblockPageFlags(it) },
             fakeGoogleBuild = fakeGoogleBuild,
             onFakeGoogleBuildChange = { fakeGoogleBuild = it; store.setSpoofGoogleBuild(it) },
+            handleWhenBarHidden = handleWhenBarHidden,
+            onHandleWhenBarHiddenChange = {
+                handleWhenBarHidden = it
+                store.setHandleWhenBarHidden(it)
+            },
+            hideLauncherIcon = hideLauncherIcon,
+            onHideLauncherIconChange = {
+                hideLauncherIcon = it
+                LauncherIcon.setHidden(context, it)
+                iconHint(it)
+            },
             selectedTab = 1,
             onSelectTab = selectTab,
         )
@@ -1175,6 +1206,10 @@ private fun AdvancedScreen(
     onUnblockPageFlagsChange: (Boolean) -> Unit,
     fakeGoogleBuild: Boolean,
     onFakeGoogleBuildChange: (Boolean) -> Unit,
+    handleWhenBarHidden: Boolean,
+    onHandleWhenBarHiddenChange: (Boolean) -> Unit,
+    hideLauncherIcon: Boolean,
+    onHideLauncherIconChange: (Boolean) -> Unit,
     selectedTab: Int,
     onSelectTab: (Int) -> Unit,
 ) {
@@ -1205,6 +1240,20 @@ private fun AdvancedScreen(
                     subtitle = "伪装为 SM-S928B，解锁一圈即搜",
                     icon = Icons.Rounded.Smartphone,
                     trailing = { Toggle(fakeGoogleBuild, onFakeGoogleBuildChange) },
+                )
+                RowDivider()
+                ListRow(
+                    title = "隐藏手势条时保持长按",
+                    subtitle = "手势条隐藏后，底部原位置的长按仍能召唤助理",
+                    icon = Icons.Rounded.TouchApp,
+                    trailing = { Toggle(handleWhenBarHidden, onHandleWhenBarHiddenChange) },
+                )
+                RowDivider()
+                ListRow(
+                    title = "隐藏桌面图标",
+                    subtitle = "隐藏后可从 LSPosed 模块页或系统设置的应用详情打开",
+                    icon = Icons.Rounded.VisibilityOff,
+                    trailing = { Toggle(hideLauncherIcon, onHideLauncherIconChange) },
                 )
             }
 

@@ -77,6 +77,8 @@ The app has two bottom pages; detail pages are reached from the entry page.
 | Skip screen-recognition pre-bind | On | Holding the gesture handle no longer pre-binds the OEM screen recognition service |
 | Unblock page-level gestures | On | Clears the page-level flags requested by apps so Settings and similar pages accept the corner swipe |
 | Spoof Google app device model | On | Reports SM-S928B inside the Google app process to unlock Circle to Search |
+| Keep the handle press with a hidden bar | On | ColorOS stops feeding the gesture handle as soon as the bar is hidden; with this on, the long press at the same bottom position still wakes the entry's configured target. The bar itself stays hidden |
+| Hide the launcher icon | Off | Removes the home-screen icon (the launcher entry is an activity alias). The entry activity keeps a MAIN + INFO filter, so the app still opens from LSPosed and from the system app-info page |
 
 The power-key haptic feedback is always on and has no setting.
 

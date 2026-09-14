@@ -87,6 +87,14 @@ class SettingsStore(context: Context) {
 
     fun setSpoofGoogleBuild(value: Boolean) = put(AssistConfig.KEY_SPOOF_GOOGLE_BUILD, value)
 
+    fun handleWhenBarHidden(): Boolean = current().getBoolean(
+        AssistConfig.KEY_HANDLE_WHEN_BAR_HIDDEN,
+        AssistConfig.DEFAULT_HANDLE_WHEN_BAR_HIDDEN,
+    )
+
+    fun setHandleWhenBarHidden(value: Boolean) =
+        put(AssistConfig.KEY_HANDLE_WHEN_BAR_HIDDEN, value)
+
     fun mode(entry: String): String =
         current().getString(entry + "_mode", AssistConfig.MODE_DEFAULT) ?: AssistConfig.MODE_DEFAULT
 

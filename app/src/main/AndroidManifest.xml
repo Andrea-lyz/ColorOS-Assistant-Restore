@@ -32,6 +32,11 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round">
 
+        <!-- The launcher entry is an alias so the advanced page can hide the icon, and MainActivity
+             keeps a MAIN + INFO filter instead of the launcher one. That INFO entry is what
+             PackageManager.getLaunchIntentForPackage() resolves when no launcher entry is enabled,
+             so the module can still be opened from LSPosed and from the system app-info page while
+             the icon is hidden. -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -39,9 +44,24 @@
             android:theme="@style/Theme.AssistRestore">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.INFO" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <activity-alias
+            android:name=".LauncherEntry"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
 
     </application>
 

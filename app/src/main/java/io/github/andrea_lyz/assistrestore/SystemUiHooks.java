@@ -41,6 +41,13 @@ import io.github.libxposed.api.XposedInterface;
 final class SystemUiHooks {
     private static final String ASSIST_MANAGER = "com.android.systemui.assist.AssistManager";
     private static final String NAV_BAR_UTILS = "com.oplus.systemui.navigationbar.utils.NavBarUtils";
+    /**
+     * The bottom-area touch handler that feeds the gesture handle. Only its own
+     * {@code NavBarUtils.isSideGestureBarHide()} call is answered with {@code false}, so the bar
+     * stays hidden for every other consumer of that flag.
+     */
+    private static final String SIDE_GESTURE_DETECTOR =
+            "com.oplus.systemui.navigationbar.gesture.sidegesture.SideGestureDetector";
     private static final String FEATURE_OPTION = "com.oplusos.systemui.common.feature.FeatureOption";
     private static final String CUSTOMIZE_FEATURE_OPTION =
             "com.oplusos.systemui.common.feature.CustomizeFeatureOption";
@@ -100,6 +107,7 @@ final class SystemUiHooks {
         installAssistantAvailability(module, classLoader);
         installGestureHandleLongPress(module, classLoader, pipeline, cts);
         installOcrScreenHandleLongPress(module, classLoader, pipeline, cts);
+        installHiddenGestureBarHandleTouch(module, classLoader);
     }
 
     /**
@@ -596,6 +604,81 @@ final class SystemUiHooks {
             module.logError("hook_failed target=" + OCR_SCREEN_HANDLER
                     + ".onLongPressed", t);
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 5. NavBarUtils.isSideGestureBarHide
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Keeps the bottom-centre long press alive while the gesture bar is hidden.
+     *
+     * <p>{@code SideGestureDetector} hands its bottom-area motion events to the gesture handle only
+     * while {@code !NavBarUtils.isSideGestureBarHide()}. That flag means "the gesture bar is
+     * hidden": side-gesture navigation ({@code getNavState() == 3}) plus the
+     * {@code gesture_side_hide_bar_prevention_enable} switch, the setting the user turns on to hide
+     * the bar. Turning the bar off therefore also drops the handle out of the touch chain - no
+     * {@code onDown} / {@code onShowPress} / {@code onLongClick}, and no assistant at the position
+     * the handle occupies. Export builds do not suppress it, which is the behaviour being
+     * restored.</p>
+     *
+     * <p>The flag itself is left untouched for everyone else:
+     * {@code NavigationBar.getBarLayoutParams()} turns the whole navigation-bar window transparent
+     * from it, and the QS special-mode provider and the sampling-region check read it as well.
+     * Only the detector's own
+     * call is answered with {@code false}, so the bar stays hidden while the handle keeps receiving
+     * touches - the OEM press animation, haptics and long-press timing all stay in place.</p>
+     */
+    private static void installHiddenGestureBarHandleTouch(
+            AssistRestoreModule module, ClassLoader classLoader) {
+        try {
+            Class<?> navBarUtils = Class.forName(NAV_BAR_UTILS, true, classLoader);
+            Method isSideGestureBarHide = navBarUtils.getDeclaredMethod("isSideGestureBarHide");
+            module.hook(isSideGestureBarHide)
+                    .setId("hidden_gesture_bar_handle_touch")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        if (!Boolean.TRUE.equals(result)) {
+                            // The bar is visible; the OEM gate is not in the way.
+                            return result;
+                        }
+                        if (!AssistConfig.isEnabled(HookPrefs.get())
+                                || !AssistConfig.handleWhenBarHidden(HookPrefs.get())) {
+                            return result;
+                        }
+                        String configured =
+                                AssistConfig.mode(HookPrefs.get(), AssistConfig.ENTRY_HANDLE);
+                        if (AssistConfig.MODE_NONE.equals(configured)
+                                || AssistConfig.MODE_OEM.equals(configured)) {
+                            // This entry is not taken over, so the OEM behaviour stands: a hidden
+                            // bar keeps the handle silent instead of waking screen recognition.
+                            return result;
+                        }
+                        if (!isCalledFromSideGestureDetector()) {
+                            return result;
+                        }
+                        module.logInfo("hidden_gesture_bar_handle_unblocked mode=" + configured);
+                        return Boolean.FALSE;
+                    });
+            module.logInfo("hook_installed target=" + NAV_BAR_UTILS + ".isSideGestureBarHide");
+        } catch (Throwable t) {
+            module.logError("hook_failed target=" + NAV_BAR_UTILS + ".isSideGestureBarHide", t);
+        }
+    }
+
+    /**
+     * @return {@code true} when the caller is the side-gesture detector, i.e. one of the two posted
+     *         runnables that decide whether the handle receives the bottom-area touch
+     */
+    private static boolean isCalledFromSideGestureDetector() {
+        StackTraceElement[] frames = new Throwable().getStackTrace();
+        for (int i = 1; i < frames.length && i <= 8; i++) {
+            if (frames[i].getClassName().startsWith(SIDE_GESTURE_DETECTOR)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

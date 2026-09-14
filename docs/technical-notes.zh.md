@@ -109,6 +109,46 @@
 `CustomizeFeatureOption.sIsSupportCircleToSearch = isExpRegion() && hasSystemFeature("com.google.android.feature.CONTEXTUAL_SEARCH")`，
 国内固件恒为 `false`，所以底角手势始终归助理使用。
 
+### 1.4 隐藏手势条后底部中央长按失效
+
+手势条视图本身不挂触摸监听：底部中央的触摸先由 `SideGestureDetector`（日志 TAG `NoBackGesture`）接收，
+只有同时满足“落点在下手势区域 + `!NavBarUtils.isSideGestureBarHide()` + `!NavBarUtils.getTaskbarStatus()` +
+该视图是 `OplusNavigationHandle`”时，才会调用 `OplusNavigationHandle.handleValidTouchEvent(event)`。
+这段判定在 `SideGestureDetector` 里以两个已投递的 Runnable 各写了一份（ACTION_DOWN 分支与其它事件分支），
+之后才是 `NavigationGestureDetector` 的 `onDown/onShowPress/onPreLongPress/onLongPress` →
+`GestureHomeHandleEventController.onLongClick()`。
+
+因此 `isSideGestureBarHide()` 为真时，底部中央的触摸根本不会进入手势条，长按无从发生。该方法的定义是：
+
+```java
+public static final boolean isSideGestureBarHide() {
+    return isGestureSideMode() && SwipeSideGestureBarTypeObserver.INSTANCE.getSwipeSideGestureBarType() == 1;
+}
+```
+
+- `isGestureSideMode()` = `getNavState() == 3`（`isGestureUpMode()` 则是 `== 2`，那一档的下手势条走
+  `GestureUpGuideBarView` 那条链路，不受这两个判定影响）；
+- `getSwipeSideGestureBarType()` 读 secure 键 `gesture_side_hide_bar_prevention_enable`（只接受 0/1）。
+  这一项与“把手势条画出来还是藏起来”共用同一个标志——下面几处可见性判定读的就是它，所以它就是设置里
+  “隐藏手势条”那一行写的键（键名到界面的对应关系没有在设置包 `设置_16.1.0.apk` 里逐字核对过）。
+
+同一个标志还被用来把手势条藏起来：`NavigationBar.getBarLayoutParams()` 在
+`isHideNavBarGestureMode()`（= `isGestureUpMode() || isSideGestureBarHide()`）为真且不是上滑手势模式时，
+把整个导航栏窗口的 `layoutParams.alpha` 置 0；`OplusNavigationBarView.updateViewVisible$1()` 与
+`OplusNavigationBarInflaterView.resizeLayout()` 也按它决定各子视图的可见性。此外 QS 特殊模式
+（`OplusQSSpecialModeProvider.isSideGestureBarHide()`）与 `UtilsStaticToolsExImpl.canSamplingRegionMode()` 同样读它。
+所以模块只改“触摸转发”这一处判定，不动标志本身、也不动窗口透明度。
+
+设备日志（`log/log.txt`，8.3 复测，当时手势条可见）里同一条链路的证据是：
+
+```
+NoBackGesture-->gestureBar animation: gestureBarNotHide = true, isCorrectHomeHandle = true
+NoBackGesture-->send down event to NavigationBarHandle
+```
+
+OxygenOS 在隐藏手势条后仍能在原位置长按呼出助理，缺的正是这道判定；模块只在 `SideGestureDetector`
+自己的调用上把 `isSideGestureBarHide()` 回答为 `false`，其余调用方照旧读原值。
+
 ## 2. 模块实现
 
 | 进程 | Hook 目标 | 作用 |
@@ -120,6 +160,7 @@
 | `com.android.launcher` | `QuickStepContract.isAssistantGestureDisabled(long)` | 只保留屏幕固定/导航栏隐藏/锁屏/下拉/QS 的屏蔽，放开应用可请求的页面级标记（128/1024），让底角手势在设置等页面也能用 |
 | `com.android.systemui` | `OplusOcrScreenServiceHandler.onLongPressed()` | 本机手势条长按的真正入口（震动 + 标志位 + 投递动作），改为在这里走助理派发 |
 | `com.android.systemui` | `OplusOcrScreenServiceHandler.onPreLongPress()` | 长按前的识屏服务预绑定；直接跳过以避免白唤醒识屏服务（它同时是 handleLongPressAction 能被调用的前提，故派发改挂在 onLongPressed） |
+| `com.android.systemui` | `NavBarUtils.isSideGestureBarHide()` | 仅当调用方是 `SideGestureDetector`（底部触摸转发判定）且手势条确实处于隐藏态时回答 `false`，让隐藏手势条后长按仍进入手势条；窗口透明、QS 特殊模式、截屏采样区域等其它调用方保持原值 |
 
 设计约束：
 
@@ -223,6 +264,10 @@ cd "D:\Users\Andrea-TB\Desktop\ColorOS Assistant\LSP_AssistRestore"
 - 未处理 3 秒长按关机、SOS 连按等电源键其它语义，这些路径不经过 `startSpeech`。
 - 三条链路的静态证据已完整（含桌面侧与框架默认值），但**尚未在设备上安装运行**：模块的实际行为
   仍需要按第 5 节做一次设备验证。
+- **隐藏手势条时的长按**：结论来自静态分析（`SideGestureDetector` + `NavBarUtils`）与设备日志里的
+  `gestureBarNotHide` 判定，尚未在真机上打开“隐藏手势条”复测。验证时打开该开关后长按底部中央，日志应先出现
+  `hidden_gesture_bar_handle_unblocked mode=...`，随后是原有的 `gesture_handle_long_press invocationType=5`。
+  这条链只覆盖侧滑返回手势（`getNavState() == 3`）；上滑手势模式下的下手势条长按是另一条链路，未做改动。
 - 设置里“长按手势指示条唤醒小布识屏”的**文案仍然是写死的静态字符串资源**（`NavBarUtil.isSupportOcr()` 决定用
   “小布识屏”还是非识屏那条），不会随默认助理变化。行为已由模块改为唤醒默认助理，但这一行文字需要在意的
   话有三条路：保持不动；给 `com.android.settings` 做 RRO 覆盖替换那两条字符串（一个独立 overlay APK，最干净，
@@ -241,6 +286,8 @@ cd "D:\Users\Andrea-TB\Desktop\ColorOS Assistant\LSP_AssistRestore"
 | `gesture_handle_long_press_skipped reason=nav_bar_switch_off` | 设置里“长按手势指示条”开关被显式关过（两个 OCR/CUI 键的值都是 0），模块按开关语义不派发 |
 | `assist_skip reason=exp_region_active / lock_task_mode / launcher_override` | 派发被主动跳过，日志已给出原因；override 只在该类型被桌面占位时出现 |
 | `gesture_handle_long_press_skipped reason=debounce` | 同一次手势被两处回调重复触发，模块已去重 |
+| 隐藏手势条后底部中央长按没反应 | 看日志里有没有 `hidden_gesture_bar_handle_unblocked`：没有则可能是高级页“隐藏手势条时保持长按”被关闭、该入口选了“小布识屏/全部关闭”，或当前不是侧滑返回手势（`getNavState() == 3`） |
+| `hidden_gesture_bar_handle_unblocked mode=...` | 正常：手势条隐藏时模块放开了长按转发，`mode` 为该入口当前配置 |
 | `gesture_handle_ocr_preload_skipped` | 正常：本次长按由助理接管，已跳过识屏服务预绑定 |
 | `assist_gesture_unblocked pageFlags=0x...` | 正常：该页面只设置了应用可请求的页面级标记，模块放开了底角手势 |
 | `assist_gesture_keep_disabled flags=0x...` | 当前处于锁屏/密码界面、通知栏或 QS 展开、导航栏隐藏或屏幕固定，模块保持屏蔽 |
@@ -374,3 +421,10 @@ currently drops every assist request on a China build. Scope is limited to `syst
 no region gate of its own and enables the corner gesture purely from the availability flag SystemUI
 sends, and the framework default for that gesture resolves to true on this build. Installing and
 running the module on the device is still the remaining validation step.
+
+A fourth, narrower gate sits in `SideGestureDetector`: the bottom-area motion events are only
+handed to the gesture handle while `NavBarUtils.isSideGestureBarHide()` is false, so hiding the
+gesture bar also removes the handle from the touch chain and the long press at that position does
+nothing. The module answers that one call - and only the one made by the detector, leaving the
+flag's other readers such as the transparent navigation-bar window untouched - with `false`, which
+is the behaviour OxygenOS keeps. It can be turned off on the advanced page.

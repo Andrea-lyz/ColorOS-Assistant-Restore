@@ -41,11 +41,13 @@ public final class AssistConfig {
     public static final String KEY_SKIP_OCR_PRELOAD = "skip_ocr_preload";
     public static final String KEY_UNBLOCK_PAGE_FLAGS = "unblock_page_flags";
     public static final String KEY_SPOOF_GOOGLE_BUILD = "spoof_google_build";
+    public static final String KEY_HANDLE_WHEN_BAR_HIDDEN = "handle_when_bar_hidden";
 
     public static final boolean DEFAULT_ENABLED = true;
     public static final boolean DEFAULT_SKIP_OCR_PRELOAD = true;
     public static final boolean DEFAULT_UNBLOCK_PAGE_FLAGS = true;
     public static final boolean DEFAULT_SPOOF_GOOGLE_BUILD = true;
+    public static final boolean DEFAULT_HANDLE_WHEN_BAR_HIDDEN = true;
 
     private AssistConfig() {
     }
@@ -88,5 +90,15 @@ public final class AssistConfig {
     public static boolean spoofGoogleBuild(SharedPreferences prefs) {
         return prefs == null
                 || prefs.getBoolean(KEY_SPOOF_GOOGLE_BUILD, DEFAULT_SPOOF_GOOGLE_BUILD);
+    }
+
+    /**
+     * Whether the gesture-handle long press survives hiding the gesture bar. ColorOS stops feeding
+     * the handle once the bar is hidden; with this on the handle keeps its touches and the entry
+     * wakes whatever it is configured to wake.
+     */
+    public static boolean handleWhenBarHidden(SharedPreferences prefs) {
+        return prefs == null
+                || prefs.getBoolean(KEY_HANDLE_WHEN_BAR_HIDDEN, DEFAULT_HANDLE_WHEN_BAR_HIDDEN);
     }
 }
