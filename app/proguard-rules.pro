@@ -4,7 +4,7 @@
 -keep,allowoptimization,allowobfuscation public class * extends io.github.libxposed.api.XposedModule {
     public <init>();
 }
--keep class io.github.andrealtb.assistrestore.** { *; }
+-keep class io.github.andrea_lyz.assistrestore.** { *; }
 
 # The framework API is compileOnly and only ever resolved at runtime.
 -dontwarn io.github.libxposed.api.**

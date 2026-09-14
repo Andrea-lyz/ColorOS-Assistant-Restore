@@ -1,4 +1,4 @@
-package io.github.andrealtb.assistrestore;
+package io.github.andrea_lyz.assistrestore;
 
 import android.content.ComponentName;
 import android.content.Context;

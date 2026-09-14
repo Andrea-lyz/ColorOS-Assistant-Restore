@@ -1,4 +1,4 @@
-package io.github.andrealtb.assistrestore.ui
+package io.github.andrea_lyz.assistrestore.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -102,7 +102,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.andrealtb.assistrestore.AssistConfig
+import io.github.andrea_lyz.assistrestore.AssistConfig
 import io.github.libxposed.service.XposedService
 import kotlinx.coroutines.launch
 import androidx.lifecycle.Lifecycle

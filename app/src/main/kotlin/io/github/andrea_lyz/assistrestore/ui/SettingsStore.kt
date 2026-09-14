@@ -1,8 +1,8 @@
-package io.github.andrealtb.assistrestore.ui
+package io.github.andrea_lyz.assistrestore.ui
 
 import android.content.Context
 import android.content.SharedPreferences
-import io.github.andrealtb.assistrestore.AssistConfig
+import io.github.andrea_lyz.assistrestore.AssistConfig
 import io.github.libxposed.service.XposedService
 
 /**

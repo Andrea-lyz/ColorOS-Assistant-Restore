@@ -1,4 +1,4 @@
-package io.github.andrealtb.assistrestore.ui
+package io.github.andrea_lyz.assistrestore.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme

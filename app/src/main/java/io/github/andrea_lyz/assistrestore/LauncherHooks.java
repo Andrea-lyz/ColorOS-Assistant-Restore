@@ -1,4 +1,4 @@
-package io.github.andrealtb.assistrestore;
+package io.github.andrea_lyz.assistrestore;
 
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Method;

@@ -19,12 +19,12 @@ val hasReleaseSigning = releaseStoreFile != null && releaseStorePassword != null
     releaseKeyAlias != null && releaseKeyPassword != null
 
 android {
-    namespace = "io.github.andrealtb.assistrestore"
+    namespace = "io.github.andrea_lyz.assistrestore"
     // io.github.libxposed:service 102 targets API 37; the platform is installed locally.
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.github.andrealtb.assistrestore"
+        applicationId = "io.github.andrea_lyz.assistrestore"
         minSdk = 26
         targetSdk = 35
         versionCode = 2

@@ -134,8 +134,8 @@
 
 ```
 LSP_AssistRestore/
-├─ app/                             模块 APK（`io.github.andrealtb.assistrestore`）
-│  ├─ src/main/java/io/github/andrealtb/assistrestore/
+├─ app/                             模块 APK（`io.github.andrea_lyz.assistrestore`）
+│  ├─ src/main/java/io/github/andrea_lyz/assistrestore/
 │  │  ├─ AssistRestoreModule.java   入口，按进程与包名路由
 │  │  ├─ SystemUiHooks.java         SystemUI 三个 Hook
 │  │  ├─ SystemServerHooks.java     system_server 电源键派发
@@ -143,7 +143,7 @@ LSP_AssistRestore/
 │  │  ├─ LauncherHooks.java         桌面侧按页面放开底角手势
 │  │  ├─ GoogleAppHooks.java        Google 应用进程内的机型伪装
 │  │  └─ Refl.java                  反射小工具
-│  ├─ src/main/kotlin/io/github/andrealtb/assistrestore/ui/
+│  ├─ src/main/kotlin/io/github/andrea_lyz/assistrestore/ui/
 │  │  ├─ MainActivity.kt            设置界面的宿主 Activity
 │  │  ├─ AssistRestoreApp.kt        五个页面：入口 / 唤醒目标 / 自定义 / 高级 / 诊断
 │  │  ├─ AssistData.kt              读设备上的助理候选与当前默认助理
