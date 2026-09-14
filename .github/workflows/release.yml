@@ -296,37 +296,38 @@ jobs:
         if: steps.lsp.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.LSP_REPO_TOKEN }}
-          TAG: ${{ steps.validate.outputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "${TAG}" --repo "${LSP_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::LSP release ${TAG} already exists; refusing to overwrite published assets."
+          # Xposed-Modules-Repo requires the release tag to be "<versionCode>-<versionName>".
+          LSP_TAG="${{ steps.current.outputs.new_code }}-${{ steps.current.outputs.new_name }}"
+          if gh release view "${LSP_TAG}" --repo "${LSP_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::LSP release ${LSP_TAG} already exists; refusing to overwrite published assets."
             exit 1
           fi
           # The mirror Release has to point at a commit in the metadata repository, so create the
           # tag there first and let --verify-tag pick it up.
-          if ! gh api "repos/${LSP_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+          if ! gh api "repos/${LSP_REPOSITORY}/git/ref/tags/${LSP_TAG}" >/dev/null 2>&1; then
             TARGET="$(gh api "repos/${LSP_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
             gh api --method POST "repos/${LSP_REPOSITORY}/git/refs" \
-              -f "ref=refs/tags/${TAG}" -f "sha=${TARGET}" >/dev/null
+              -f "ref=refs/tags/${LSP_TAG}" -f "sha=${TARGET}" >/dev/null
           fi
-          gh release create "${TAG}" \
+          gh release create "${LSP_TAG}" \
             "${{ steps.stage.outputs.release_apk }}" \
             "${{ steps.stage.outputs.release_sha }}" \
             --repo "${LSP_REPOSITORY}" \
             --verify-tag \
-            --title "${TAG}" \
+            --title "ColorOS 唤语 ${LSP_TAG}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}"
 
       - name: Verify LSP mirror assets
         if: steps.lsp.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.LSP_REPO_TOKEN }}
-          TAG: ${{ steps.validate.outputs.tag }}
         run: |
           set -euo pipefail
+          LSP_TAG="${{ steps.current.outputs.new_code }}-${{ steps.current.outputs.new_name }}"
           mkdir -p "$RUNNER_TEMP/lsp-verify"
-          gh release download "${TAG}" --repo "${LSP_REPOSITORY}" \
+          gh release download "${LSP_TAG}" --repo "${LSP_REPOSITORY}" \
             -p '*.sha256' -D "$RUNNER_TEMP/lsp-verify"
           mirrored="$(awk '{print $1}' "$RUNNER_TEMP/lsp-verify"/*.sha256)"
           local_sum="$(awk '{print $1}' "${{ steps.stage.outputs.release_sha }}")"
