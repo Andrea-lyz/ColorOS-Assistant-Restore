@@ -26,6 +26,7 @@ Each entry has its own wake target and can be turned off individually. Beyond th
 - **Circle to Search**: the module fills in the system CTS service chain that China builds lack, and can spoof a supported device model inside the Google app process.
 - **Page-level gesture**: the launcher blocks the corner gesture on pages such as Settings by default; the module clears those two page-level flags.
 - **No useless wake-up**: holding the gesture handle no longer pre-binds the OEM screen recognition service.
+- **Holding the handle only summons the assistant**: the bar's own strip (about 480x88 px) belongs to the system navigation bar window, so the page no longer fires its own long press at the same time; this also holds with the gesture bar hidden, and the strip goes back to the keyboard while it is up.
 - **Process retention**: a frozen Google app is the usual reason a dispatch succeeds with nothing on screen, so the module exempts that app at the OEM freeze decision point.
 
 ## Requirements

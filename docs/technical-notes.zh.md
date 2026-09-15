@@ -149,6 +149,29 @@ NoBackGesture-->send down event to NavigationBarHandle
 OxygenOS 在隐藏手势条后仍能在原位置长按呼出助理，缺的正是这道判定；模块只在 `SideGestureDetector`
 自己的调用上把 `isSideGestureBarHide()` 回答为 `false`，其余调用方照旧读原值。
 
+### 1.5 长按手势条时页面同时触发长按
+
+国内固件的手势条不是可触摸窗口：`OplusNavigationHandle extends View` 且不处理触摸，窗口默认
+`touchableRegion=<empty>`（设备实测），底部这一条的按压实际由页面（应用、桌面或输入法）接收，SystemUI 只是通过
+gesture monitor 旁听后再决定是否交给手势条。于是就会出现“助理和页面长按同时发生”：页面自己的长按在 500ms 触发，
+手势条要到 800ms 才判定（`NavigationGestureDetector`：SHOW_PRESS 200ms、onPreLongPress 300ms、LONG_PRESS 800ms），
+页面必然先响。
+
+模块把手势条自己的那一块交还给导航栏窗口：
+
+- **触摸区域**：用 `ViewRootImpl.setTouchableRegion` 把窗口可触摸区设为“手势条那一列 × 底部手势区”，实测为
+  x∈[480,960]、y∈[3080,3168]（窗口内坐标 x∈[480,960]、y∈[88,176]）。宽度取 `oplus` 包的
+  `navigation_gesture_view_width`（实测 480px），高度取 SystemUI 的 `bottom_gesture_area_height`（88px，与
+  `SideGestureDetector` 判定用的值一致），窗口尺寸取导航栏窗口自身，因此隐藏手势条、view 不参与布局时也算得出来。
+- **窗口可见性**：隐藏手势条时 OEM 把窗口 alpha 置 0，WindowManager 会把完全透明的窗口从输入分发里剔除
+  （`inputConfig=NOT_VISIBLE`），区域随之失效。模块在窗口参数生成（`NavigationBar.getBarLayoutParamsForRotation`）
+  与实时开关（`OplusNavigationBarView.updateWindowAlpha`）两处把 0 改写为 0.01，窗口留在输入链路里，画面上依旧不可见。
+- **例外**：输入法可见时主动置空区域（`handle_touch_region_skipped reason=ime_visible`），键盘底部那一排仍归键盘。
+
+验证（PJZ110 / ColorOS 16，注入一次底部中央 1.8s 长按后读 `dumpsys input` 的 TouchStates）：手势条显示与隐藏两种状态下，
+触摸目标都是 `NavigationBar_displayId_0`（`targetFlags=FOREGROUND`），应用窗口不在触摸列表里；同时模块日志照常出现
+`hidden_gesture_bar_handle_unblocked` 与 `circle_to_search_triggered`，从手势条位置往上滑回桌面也仍然生效。
+
 ## 2. 模块实现
 
 | 进程 | Hook 目标 | 作用 |
@@ -161,6 +184,7 @@ OxygenOS 在隐藏手势条后仍能在原位置长按呼出助理，缺的正�
 | `com.android.systemui` | `OplusOcrScreenServiceHandler.onLongPressed()` | 本机手势条长按的真正入口（震动 + 标志位 + 投递动作），改为在这里走助理派发 |
 | `com.android.systemui` | `OplusOcrScreenServiceHandler.onPreLongPress()` | 长按前的识屏服务预绑定；直接跳过以避免白唤醒识屏服务（它同时是 handleLongPressAction 能被调用的前提，故派发改挂在 onLongPressed） |
 | `com.android.systemui` | `NavBarUtils.isSideGestureBarHide()` | 仅当调用方是 `SideGestureDetector`（底部触摸转发判定）且手势条确实处于隐藏态时回答 `false`，让隐藏手势条后长按仍进入手势条；窗口透明、QS 特殊模式、截屏采样区域等其它调用方保持原值 |
+| `com.android.systemui` | `OplusNavigationHandle.onLayout`、`NavigationBar.getBarLayoutParamsForRotation(int,WindowMetrics)`、`OplusNavigationBarView.updateWindowAlpha(int)` | 把导航栏窗口的可触摸区设为手势条自身那一条；隐藏手势条时把窗口 alpha 从 0 保持为 0.01，避免窗口被剔除出输入分发后页面又拿到这条区域、触发自己的长按 |
 
 设计约束：
 
@@ -288,6 +312,9 @@ cd "D:\Users\Andrea-TB\Desktop\ColorOS Assistant\LSP_AssistRestore"
 | `gesture_handle_long_press_skipped reason=debounce` | 同一次手势被两处回调重复触发，模块已去重 |
 | 隐藏手势条后底部中央长按没反应 | 看日志里有没有 `hidden_gesture_bar_handle_unblocked`：没有则可能是高级页“隐藏手势条时保持长按”被关闭、该入口选了“小布识屏/全部关闭”，或当前不是侧滑返回手势（`getNavState() == 3`） |
 | `hidden_gesture_bar_handle_unblocked mode=...` | 正常：手势条隐藏时模块放开了长按转发，`mode` 为该入口当前配置 |
+| 长按手势条时页面也触发自己的长按 | 读 `dumpsys input` 里 NavigationBar 窗口的 `touchableRegion` 与 `inputConfig`：区域应为手势条那一条、且不带 `NOT_VISIBLE`；模块日志对应 `handle_touch_region applied=...` 与 `handle_window_alpha=0.01` |
+| `handle_touch_region_skipped reason=ime_visible` | 正常：输入法弹起时该区域交还键盘 |
+| `handle_touch_region_skipped reason=not_owned` | 该入口选了「小布识屏」或「全部关闭」，模块不接管这一条区域 |
 | `gesture_handle_ocr_preload_skipped` | 正常：本次长按由助理接管，已跳过识屏服务预绑定 |
 | `assist_gesture_unblocked pageFlags=0x...` | 正常：该页面只设置了应用可请求的页面级标记，模块放开了底角手势 |
 | `assist_gesture_keep_disabled flags=0x...` | 当前处于锁屏/密码界面、通知栏或 QS 展开、导航栏隐藏或屏幕固定，模块保持屏蔽 |

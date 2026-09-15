@@ -6,10 +6,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
+import android.graphics.Region;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.view.View;
+import android.view.ViewParent;
+import android.view.WindowInsets;
+import android.view.WindowManager;
+import android.view.WindowMetrics;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -48,6 +54,18 @@ final class SystemUiHooks {
      */
     private static final String SIDE_GESTURE_DETECTOR =
             "com.oplus.systemui.navigationbar.gesture.sidegesture.SideGestureDetector";
+    /**
+     * The bar itself. It is a plain view inside the navigation-bar window, so handing its bounds to
+     * the window's touchable region is what makes the bar area belong to the system again.
+     */
+    private static final String SIDE_GESTURE_HANDLE =
+            "com.oplus.systemui.navigationbar.gesture.sidegesture.OplusNavigationHandle";
+    /** Builds the navigation-bar window parameters, including the alpha used to hide the bar. */
+    private static final String NAVIGATION_BAR =
+            "com.android.systemui.navigationbar.views.NavigationBar";
+    /** The bar view that re-writes that alpha when the bar is hidden or shown again. */
+    private static final String OPLUS_NAV_BAR_VIEW =
+            "com.oplusos.systemui.navigationbar.OplusNavigationBarView";
     private static final String FEATURE_OPTION = "com.oplusos.systemui.common.feature.FeatureOption";
     private static final String CUSTOMIZE_FEATURE_OPTION =
             "com.oplusos.systemui.common.feature.CustomizeFeatureOption";
@@ -97,6 +115,23 @@ final class SystemUiHooks {
     private static volatile long lastHandleDispatchAtMs;
     private static final long HANDLE_DISPATCH_DEBOUNCE_MS = 800L;
 
+    /**
+     * Window alpha used while the gesture bar is hidden: above zero so WindowManager keeps the
+     * window in input dispatch, and far below what the eye can pick up.
+     */
+    private static final float HIDDEN_BAR_WINDOW_ALPHA = 0.01f;
+
+    /* The touchable region currently applied to the navigation-bar window (null: OEM default). */
+    private static volatile Region appliedHandleRegion;
+    /** True while a hidden navigation bar window is held in the input pipeline by the module. */
+    private static volatile boolean windowAlphaForced;
+    /** Last bar view seen by the region hook; the window hooks reuse it. */
+    private static volatile View lastHandleView;
+    private static volatile Method viewRootImplGetter;
+    private static volatile Method touchableRegionSetter;
+    private static volatile Field paramsForRotationField;
+    private static volatile String lastRegionSkipReason;
+
     private SystemUiHooks() {
     }
 
@@ -108,6 +143,7 @@ final class SystemUiHooks {
         installGestureHandleLongPress(module, classLoader, pipeline, cts);
         installOcrScreenHandleLongPress(module, classLoader, pipeline, cts);
         installHiddenGestureBarHandleTouch(module, classLoader);
+        installHandleTouchRegion(module, classLoader);
     }
 
     /**
@@ -679,6 +715,386 @@ final class SystemUiHooks {
             }
         }
         return false;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 6. The gesture bar area belongs to the navigation-bar window
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Gives the bar's own area to the navigation-bar window, the way AOSP does.
+     *
+     * <p>The bar is only a drawing: {@code OplusNavigationHandle} is a plain {@code View} inside
+     * the navigation-bar window, that window's touchable region is empty
+     * ({@code touchableRegion=<empty>} in {@code dumpsys input}), so every press in the bottom
+     * strip goes to whatever is underneath - a page, the launcher or the keyboard. The bar learns
+     * about the press from a gesture monitor afterwards, and a page long press has already fired at
+     * 500 ms by the time the bar commits at 800 ms, which is the double trigger this fixes.</p>
+     *
+     * <p>Setting the window's touchable region to the bar's own bounds makes the window the touch
+     * target for exactly the presses the bar can act on, so the page never sees them; the gesture
+     * monitor still receives its copy and the whole bar pipeline - press animation, haptics, the
+     * 800 ms long press - stays untouched. Swipes and taps elsewhere in the strip keep going to the
+     * page, and while the keyboard is up the region stays empty so its bottom row keeps working.</p>
+     *
+     * <p>Re-applied on every layout pass of the bar (rotation, navigation-mode change, insets) and
+     * only when the result differs from what is already applied.</p>
+     */
+    private static void installHandleTouchRegion(
+            AssistRestoreModule module, ClassLoader classLoader) {
+        try {
+            Class<?> handle = Class.forName(SIDE_GESTURE_HANDLE, true, classLoader);
+            Method onLayout = handle.getMethod(
+                    "onLayout", boolean.class, int.class, int.class, int.class, int.class);
+            module.hook(onLayout)
+                    .setId("handle_touch_region")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        View view = (View) chain.getThisObject();
+                        lastHandleView = view;
+                        applyHandleTouchRegion(module, view);
+                        return result;
+                    });
+            module.logInfo("hook_installed target=" + SIDE_GESTURE_HANDLE + ".onLayout");
+        } catch (Throwable t) {
+            module.logError("hook_failed target=" + SIDE_GESTURE_HANDLE + ".onLayout", t);
+        }
+        installHiddenBarWindowHooks(module, classLoader);
+    }
+
+    /**
+     * Stops the OEM from taking the bar's window out of input dispatch.
+     *
+     * <p>Hiding the bar sets the navigation-bar window's alpha to 0, and WindowManager drops a fully
+     * transparent window from input dispatch: {@code dumpsys input} then reports
+     * {@code inputConfig=NOT_VISIBLE}, the window stops being a touch target, and the page gets the
+     * bar-area press again. Both places that write that alpha are wrapped - the window parameters
+     * built at creation time and the live toggle - so the window stays in the pipeline while
+     * remaining invisible on screen.</p>
+     */
+    private static void installHiddenBarWindowHooks(
+            AssistRestoreModule module, ClassLoader classLoader) {
+        try {
+            Class<?> bar = Class.forName(NAVIGATION_BAR, true, classLoader);
+            Method forRotation = bar.getMethod(
+                    "getBarLayoutParamsForRotation", int.class, WindowMetrics.class);
+            module.hook(forRotation)
+                    .setId("bar_window_alpha_created")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        patchCreatedWindowAlpha(module, result);
+                        return result;
+                    });
+            module.logInfo("hook_installed target=" + NAVIGATION_BAR
+                    + ".getBarLayoutParamsForRotation");
+        } catch (Throwable t) {
+            module.logWarn("hook_skipped target=" + NAVIGATION_BAR
+                    + ".getBarLayoutParamsForRotation " + t);
+        }
+        try {
+            Class<?> barView = Class.forName(OPLUS_NAV_BAR_VIEW, true, classLoader);
+            Method updateWindowAlpha = barView.getMethod("updateWindowAlpha", int.class);
+            module.hook(updateWindowAlpha)
+                    .setId("bar_window_alpha_toggled")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        View bar = (View) chain.getThisObject();
+                        Object result = chain.proceed();
+                        // The OEM has just written the alpha; re-assert ours and the region.
+                        bar.post(() -> {
+                            if (keepHiddenWindowReachable(module, bar, true)) {
+                                module.logInfo("handle_window_alpha reasserted after toggle");
+                            }
+                            View handle = lastHandleView;
+                            if (handle == null) {
+                                handle = findHandleView(bar);
+                                lastHandleView = handle;
+                            }
+                            if (handle != null) {
+                                applyHandleTouchRegion(module, handle);
+                            }
+                        });
+                        return result;
+                    });
+            module.logInfo("hook_installed target=" + OPLUS_NAV_BAR_VIEW + ".updateWindowAlpha");
+        } catch (Throwable t) {
+            module.logWarn("hook_skipped target=" + OPLUS_NAV_BAR_VIEW
+                    + ".updateWindowAlpha " + t);
+        }
+    }
+
+    /** Keeps the window parameters built for a hidden bar inside input dispatch. */
+    private static void patchCreatedWindowAlpha(AssistRestoreModule module, Object params) {
+        if (!handleOwnedByModule() || !(params instanceof WindowManager.LayoutParams)) {
+            return;
+        }
+        WindowManager.LayoutParams layoutParams = (WindowManager.LayoutParams) params;
+        boolean patched = patchHiddenAlpha(layoutParams);
+        try {
+            if (paramsForRotationField == null) {
+                try {
+                    paramsForRotationField = WindowManager.LayoutParams.class
+                            .getField("paramsForRotation");
+                } catch (NoSuchFieldException hidden) {
+                    paramsForRotationField = WindowManager.LayoutParams.class
+                            .getDeclaredField("paramsForRotation");
+                    paramsForRotationField.setAccessible(true);
+                }
+            }
+            Object[] perRotation = (Object[]) paramsForRotationField.get(layoutParams);
+            if (perRotation != null) {
+                for (Object each : perRotation) {
+                    if (each instanceof WindowManager.LayoutParams) {
+                        patched |= patchHiddenAlpha((WindowManager.LayoutParams) each);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            module.logWarn("bar_window_alpha_rotation_failed " + t);
+        }
+        if (patched) {
+            module.logInfo("handle_window_alpha=" + HIDDEN_BAR_WINDOW_ALPHA
+                    + " reason=created_hidden");
+        }
+    }
+
+    private static boolean patchHiddenAlpha(WindowManager.LayoutParams layoutParams) {
+        if (layoutParams == null || layoutParams.alpha != 0f) {
+            return false;
+        }
+        layoutParams.alpha = HIDDEN_BAR_WINDOW_ALPHA;
+        return true;
+    }
+
+    /** {@code true} when the module answers the gesture-handle entry itself. */
+    private static boolean handleOwnedByModule() {
+        if (!AssistConfig.isEnabled(HookPrefs.get())) {
+            return false;
+        }
+        String configured = AssistConfig.mode(HookPrefs.get(), AssistConfig.ENTRY_HANDLE);
+        return !AssistConfig.MODE_NONE.equals(configured)
+                && !AssistConfig.MODE_OEM.equals(configured);
+    }
+
+    /** Applies, refreshes or clears the navigation bar's touchable region. */
+    private static void applyHandleTouchRegion(AssistRestoreModule module, View handle) {
+        try {
+            Region desired = handleRegionFor(module, handle);
+            boolean alphaTouched = keepHiddenWindowReachable(module, handle, desired != null);
+            if (!alphaTouched
+                    && (desired == null
+                    ? appliedHandleRegion == null
+                    : desired.equals(appliedHandleRegion))) {
+                return;
+            }
+            if (viewRootImplGetter == null) {
+                // View#getViewRootImpl is hidden but callable; the region setter lives on the
+                // returned ViewRootImpl, which is why both steps are reflective.
+                viewRootImplGetter = View.class.getMethod("getViewRootImpl");
+            }
+            Object viewRoot = viewRootImplGetter.invoke(handle);
+            if (viewRoot == null) {
+                return;
+            }
+            if (touchableRegionSetter == null) {
+                touchableRegionSetter = viewRoot.getClass()
+                        .getMethod("setTouchableRegion", Region.class);
+            }
+            touchableRegionSetter.invoke(viewRoot, desired != null ? desired : new Region());
+            appliedHandleRegion = desired;
+            module.logInfo(desired == null
+                    ? "handle_touch_region cleared (bar area goes back to the page)"
+                    : "handle_touch_region applied=" + desired);
+        } catch (Throwable t) {
+            module.logWarn("handle_touch_region_failed " + t);
+        }
+    }
+
+    /**
+     * Keeps a visually hidden gesture bar inside the input pipeline.
+     *
+     * <p>The OEM hides the bar by setting the navigation-bar window alpha to 0, and WindowManager
+     * drops a fully transparent window from input dispatch: {@code dumpsys input} then reports
+     * {@code inputConfig=NOT_VISIBLE}, the window stops being a touch target, and the page receives
+     * the bar-area press again - which is why the page long press came back as soon as the bar was
+     * hidden. Holding the window alpha just above zero keeps the window in the pipeline while it
+     * stays invisible on screen, and the touchable region below then decides who owns the gesture
+     * area.</p>
+     *
+     * @return {@code true} when the window alpha was scheduled to change
+     */
+    private static boolean keepHiddenWindowReachable(
+            AssistRestoreModule module, View handle, boolean wantTouchable) {
+        try {
+            View owner = windowParamOwner(handle);
+            if (owner == null || !(owner.getLayoutParams() instanceof WindowManager.LayoutParams)) {
+                return false;
+            }
+            final WindowManager.LayoutParams layoutParams =
+                    (WindowManager.LayoutParams) owner.getLayoutParams();
+            if (wantTouchable) {
+                if (layoutParams.alpha != 0f) {
+                    // The OEM keeps the bar visible; there is nothing to hold open.
+                    windowAlphaForced = false;
+                    return false;
+                }
+                layoutParams.alpha = HIDDEN_BAR_WINDOW_ALPHA;
+                windowAlphaForced = true;
+            } else if (windowAlphaForced) {
+                layoutParams.alpha = 0f;
+                windowAlphaForced = false;
+            } else {
+                return false;
+            }
+            // This runs inside a layout pass, so the window update has to wait for it to finish.
+            handle.post(() -> {
+                try {
+                    WindowManager windowManager = (WindowManager)
+                            handle.getContext().getSystemService(Context.WINDOW_SERVICE);
+                    if (windowManager == null) {
+                        module.logWarn("handle_window_alpha_skipped reason=no_window_manager");
+                        return;
+                    }
+                    windowManager.updateViewLayout(owner, layoutParams);
+                    module.logInfo("handle_window_alpha=" + layoutParams.alpha
+                            + " reason=" + (wantTouchable ? "keep_input" : "restore"));
+                } catch (Throwable t) {
+                    module.logWarn("handle_window_alpha_failed " + t);
+                }
+            });
+            return true;
+        } catch (Throwable t) {
+            module.logWarn("handle_window_alpha_probe_failed " + t);
+            return false;
+        }
+    }
+
+    /** The view whose layout params are the navigation bar window's. */
+    private static View windowParamOwner(View handle) {
+        View current = handle;
+        while (current != null) {
+            if (current.getLayoutParams() instanceof WindowManager.LayoutParams) {
+                return current;
+            }
+            ViewParent parent = current.getParent();
+            current = parent instanceof View ? (View) parent : null;
+        }
+        return null;
+    }
+
+    /**
+     * @return the region the navigation-bar window should own, or {@code null} when the OEM default
+     *         (an empty region, i.e. the bar area stays with the page) is the right answer
+     */
+    private static Region handleRegionFor(AssistRestoreModule module, View handle) {
+        if (!handleOwnedByModule()) {
+            // Not taken over: the OEM screen recognition needs the press to reach the page, exactly
+            // as it does today.
+            return skipRegion(module, "not_owned");
+        }
+        WindowInsets insets = handle.getRootWindowInsets();
+        if (insets != null && insets.isVisible(WindowInsets.Type.ime())) {
+            // The keyboard owns the bottom of the screen while it is up; its bottom row must keep
+            // receiving touches, which the OEM leaves to it as well.
+            return skipRegion(module, "ime_visible");
+        }
+        View windowView = windowParamOwner(handle);
+        if (windowView == null) {
+            return skipRegion(module, "no_window_view");
+        }
+        int windowWidth = windowView.getWidth();
+        int windowHeight = windowView.getHeight();
+        if (windowWidth <= 0 || windowHeight <= 0) {
+            return skipRegion(module, "window_not_laid_out");
+        }
+        lastRegionSkipReason = null;
+        int strip = bottomGestureAreaHeight(handle);
+        if (strip <= 0) {
+            strip = windowHeight;
+        }
+        int left;
+        int right;
+        if (handle.getWidth() > 0 && handle.getHeight() > 0) {
+            int[] location = new int[2];
+            handle.getLocationInWindow(location);
+            left = location[0];
+            right = location[0] + handle.getWidth();
+        } else {
+            // A hidden bar is not laid out at all, so rebuild its area from what the OEM draws with:
+            // the bar has its own width and sits centred in the window.
+            int barWidth = gestureBarWidth(handle);
+            if (barWidth <= 0) {
+                return skipRegion(module, "no_bar_geometry");
+            }
+            left = (windowWidth - barWidth) / 2;
+            right = left + barWidth;
+        }
+        // Only the strip the OEM's own long press reacts to (bottom_gesture_area_height, the height
+        // SideGestureDetector compares against). Everything above it - a folder's bottom icon row,
+        // for instance - keeps going to the page exactly as before.
+        int bottom = windowHeight;
+        int top = Math.max(0, bottom - strip);
+        return new Region(left, top, right, bottom);
+    }
+
+    /** Width the bar is drawn with, i.e. the area its long press listens to. */
+    private static int gestureBarWidth(View view) {
+        return oplusDimension(view, "navigation_gesture_view_width");
+    }
+
+    /** The bar view, when it is not laid out and the layout hook never cached it. */
+    private static View findHandleView(View root) {
+        if (root == null) {
+            return null;
+        }
+        if (root.getClass().getName().startsWith(SIDE_GESTURE_HANDLE)) {
+            return root;
+        }
+        if (!(root instanceof android.view.ViewGroup)) {
+            return null;
+        }
+        android.view.ViewGroup group = (android.view.ViewGroup) root;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View found = findHandleView(group.getChildAt(i));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static int oplusDimension(View view, String name) {
+        try {
+            int id = view.getResources().getIdentifier(name, "dimen", "oplus");
+            return id != 0 ? view.getResources().getDimensionPixelSize(id) : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /** Logs why the bar area is left to the page, once per reason. */
+    private static Region skipRegion(AssistRestoreModule module, String reason) {
+        if (!reason.equals(lastRegionSkipReason)) {
+            lastRegionSkipReason = reason;
+            module.logInfo("handle_touch_region_skipped reason=" + reason);
+        }
+        return null;
+    }
+
+    /** The OEM's bottom gesture area height, i.e. how far up the handle's long press reacts. */
+    private static int bottomGestureAreaHeight(View handle) {
+        try {
+            int id = handle.getResources()
+                    .getIdentifier("bottom_gesture_area_height", "dimen", "com.android.systemui");
+            if (id != 0) {
+                return handle.getResources().getDimensionPixelSize(id);
+            }
+        } catch (Throwable ignored) {
+            // Falls back to the handle's own height, which is the whole navigation bar window.
+        }
+        return 0;
     }
 
     /**
